@@ -1,12 +1,13 @@
 import torch.nn as nn
+from src.custom_relu import MyReLUModule
 
 
 class TwoLayerMLP(nn.Module):
-    def __init__(self, in_dim: int = 28 * 28, hidden: int = 256, out_dim: int = 10):
+    def __init__(self, in_dim=28 * 28, hidden=256, out_dim=10):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(in_dim, hidden),
-            nn.ReLU(),
+            MyReLUModule(),  # <‑‑ use the module wrapper
             nn.Linear(hidden, out_dim),
         )
 
