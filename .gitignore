@@ -25,3 +25,12 @@ Icon?
 *.log
 *.sqlite3
 *.db
+
+# Datasets
+data/
+
+# Datasets we don’t track
+data/
+
+# Datasets we never track
+data/
