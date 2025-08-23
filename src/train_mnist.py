@@ -25,6 +25,12 @@ def train(args):
     train_dl, test_dl = get_data(args.batch)
     model = TwoLayerMLP().to(device)
     opt = optim.Adam(model.parameters(), lr=args.lr)
+    
+    if args.scheduler == "cosine":
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
+    else:
+        scheduler = None
+    
     crit = nn.CrossEntropyLoss()
 
     for epoch in range(1, args.epochs + 1):
@@ -46,6 +52,10 @@ def train(args):
                 total += yb.size(0)
         acc = 100 * correct / total
         print(f"Epoch {epoch}: val accuracy {acc:.2f}%")
+        
+        if scheduler is not None:
+            scheduler.step()
+            print(f"Epoch {epoch} LR {scheduler.get_last_lr()[0]:.2e}")
 
     torch.save(model.state_dict(), "mlp_mnist.pt")
 
@@ -55,5 +65,6 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch", type=int, default=128)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--scheduler", choices=["none", "cosine"], default="none")
     args = parser.parse_args()
     train(args)
