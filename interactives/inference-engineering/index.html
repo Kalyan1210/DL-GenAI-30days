@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inference Engineering — An Interactive Course</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav id="sidebar">
+  <div class="side-title">Inference<br>Engineering</div>
+  <div class="side-sub">interactive course</div>
+  <ol id="navlist">
+    <li><a href="#m0" data-m="0">Orientation</a></li>
+    <li><a href="#m1" data-m="1">Prefill vs Decode</a></li>
+    <li><a href="#m2" data-m="2">Roofline &amp; Arithmetic Intensity</a></li>
+    <li><a href="#m3" data-m="3">The KV Cache</a></li>
+    <li><a href="#m4" data-m="4">Continuous Batching</a></li>
+    <li><a href="#m5" data-m="5">PagedAttention</a></li>
+    <li><a href="#m6" data-m="6">Quantization</a></li>
+    <li><a href="#m7" data-m="7">Speculative Decoding</a></li>
+    <li><a href="#m8" data-m="8">Sampling &amp; Decoding</a></li>
+    <li><a href="#m9" data-m="9">Multi-GPU Parallelism</a></li>
+    <li><a href="#m10" data-m="10">Capstone: Latency Lab</a></li>
+    <li><a href="#m11" data-m="11">Final Exam</a></li>
+  </ol>
+  <div class="side-progress">
+    <div class="side-progress-label">progress <span id="progPct">0%</span></div>
+    <div class="side-progress-bar"><div id="progFill"></div></div>
+  </div>
+</nav>
+
+<main id="content">
+
+<!-- ================= MODULE 0 ================= -->
+<section class="module" id="m0">
+  <div class="kicker">Module 0</div>
+  <h1>Orientation: what is inference engineering?</h1>
+  <p>
+    Training a large language model happens once. <b>Inference</b> — actually serving the model to
+    users — happens billions of times, and it is where nearly all of the cost, latency, and
+    engineering pain lives. <b>Inference engineering</b> is the discipline of making a trained
+    transformer generate tokens <em>fast</em>, <em>cheap</em>, and <em>at scale</em> without
+    degrading quality.
+  </p>
+  <p>Everything in this course hangs off four numbers. Hover each card to see why it matters.</p>
+  <div class="cards">
+    <div class="card"><h3>TTFT</h3><p><b>Time To First Token.</b> How long the user stares at a blank screen. Dominated by the <em>prefill</em> phase — processing the whole prompt. Compute-bound.</p></div>
+    <div class="card"><h3>TPOT</h3><p><b>Time Per Output Token.</b> The pace of the stream after the first token. Dominated by the <em>decode</em> phase. Memory-bandwidth-bound.</p></div>
+    <div class="card"><h3>Throughput</h3><p><b>Tokens/second across all users.</b> What the accountant cares about. Raised by batching, quantization, better schedulers.</p></div>
+    <div class="card"><h3>Goodput</h3><p><b>Throughput that meets the latency SLO.</b> A server doing 100k tok/s where every request misses its deadline has goodput ≈ 0.</p></div>
+  </div>
+  <p>
+    The single most important fact in this field: <b>generating one token requires streaming
+    essentially every weight of the model through the GPU's memory system.</b> A 70B-parameter model
+    in FP16 is 140&nbsp;GB. To emit one token you must read those 140&nbsp;GB from HBM. At
+    3.35&nbsp;TB/s (an H100), that alone takes ~42&nbsp;ms — regardless of how fast the compute
+    units are. Almost every technique you will learn (batching, quantization, speculative decoding,
+    caching) is an attack on that one bottleneck.
+  </p>
+  <div class="callout">
+    Below: a live counter streaming the weights of a 70B FP16 model for a single token.
+    Drag the bandwidth slider — this is your first inference-engineering knob.
+  </div>
+  <div class="sim">
+    <div class="controls">
+      <label>Model size <select id="m0-model">
+        <option value="7">7B</option><option value="13">13B</option>
+        <option value="70" selected>70B</option><option value="405">405B</option>
+      </select></label>
+      <label>HBM bandwidth <span class="val" id="m0-bw-v">3.35 TB/s</span>
+        <input type="range" id="m0-bw" min="0.4" max="8" step="0.05" value="3.35"></label>
+      <button id="m0-go" class="btn">Stream one token</button>
+    </div>
+    <canvas id="m0-canvas" height="180"></canvas>
+    <div class="readout" id="m0-read"></div>
+  </div>
+  <button class="done-btn" data-m="0">Mark module complete ✓</button>
+</section>
+
+<!-- ================= MODULE 1 ================= -->
+<section class="module" id="m1">
+  <div class="kicker">Module 1</div>
+  <h1>Prefill vs Decode: the two-phase life of a request</h1>
+  <p>
+    A transformer serving one request runs in two radically different regimes:
+  </p>
+  <ul>
+    <li><b>Prefill</b> — the entire prompt is known up front, so all its tokens are processed
+      <em>in parallel</em> in one big matrix–matrix multiply (GEMM). Thousands of tokens, one pass.
+      This saturates the GPU's compute units. Cost grows with prompt length; it sets TTFT.</li>
+    <li><b>Decode</b> — generation is <em>autoregressive</em>: token <i>t</i>+1 depends on token
+      <i>t</i>, so we must generate strictly one token at a time. Each step is a skinny
+      matrix–<em>vector</em> multiply (GEMV) that still reads all the weights. The GPU's compute sits
+      mostly idle waiting on memory. This sets TPOT.</li>
+  </ul>
+  <p>
+    Watch the simulation: prefill lights up all prompt tokens at once and pins compute utilization;
+    decode crawls one token per step and pins <em>bandwidth</em> instead. This asymmetry is why
+    modern servers (e.g. "disaggregated serving") often run prefill and decode on
+    <em>separate GPU pools</em>.
+  </p>
+  <div class="sim">
+    <div class="controls">
+      <label>Prompt tokens <span class="val" id="m1-p-v">24</span>
+        <input type="range" id="m1-p" min="4" max="48" step="1" value="24"></label>
+      <label>Tokens to generate <span class="val" id="m1-g-v">16</span>
+        <input type="range" id="m1-g" min="4" max="32" step="1" value="16"></label>
+      <button id="m1-run" class="btn">Run request</button>
+    </div>
+    <canvas id="m1-canvas" height="300"></canvas>
+    <div class="readout" id="m1-read"></div>
+  </div>
+  <div class="quiz-inline" data-q="m1q">
+    <p class="q">Quick check — a user complains that long prompts make the <em>first</em> word slow, but streaming speed after that is fine. Which phase do you optimize?</p>
+    <button class="qa" data-ok="1">Prefill</button>
+    <button class="qa" data-ok="0">Decode</button>
+    <div class="qfb"></div>
+  </div>
+  <button class="done-btn" data-m="1">Mark module complete ✓</button>
+</section>
+
+<!-- ================= MODULE 2 ================= -->
+<section class="module" id="m2">
+  <div class="kicker">Module 2</div>
+  <h1>The Roofline Model: are you compute-bound or memory-bound?</h1>
+  <p>
+    Every kernel on a GPU is limited by one of two ceilings: the peak compute rate
+    (FLOP/s) or the peak memory bandwidth (bytes/s). Which one binds depends on the kernel's
+    <b>arithmetic intensity</b> (AI): <span class="math">AI = FLOPs performed ÷ bytes moved</span>.
+  </p>
+  <p>
+    For a transformer forward pass with batch size <i>B</i> (decode: <i>B</i> sequences each
+    producing 1 token), each weight byte read from HBM participates in roughly <i>B</i>
+    multiply-accumulates. So <b>AI ≈ B</b> (in FLOPs per FP16 byte, up to a small constant). The GPU's
+    <b>ridge point</b> is <span class="math">peak FLOP/s ÷ bandwidth</span> — for an H100:
+    ~989&nbsp;TFLOPS ÷ 3.35&nbsp;TB/s ≈ <b>295</b>. Conclusion: decode at batch 1 uses well under 1%
+    of the GPU's compute. You need a batch of ~300 concurrent tokens to leave the memory-bound
+    region.
+  </p>
+  <p>
+    Drag the batch-size slider and watch your operating point slide along the roofline. Prefill of a
+    2048-token prompt is plotted for contrast — it lands deep in compute-bound territory, which is
+    exactly why prefill and decode want different optimizations.
+  </p>
+  <div class="sim">
+    <div class="controls">
+      <label>GPU <select id="m2-gpu">
+        <option value="a100">A100 (312 TF, 2.0 TB/s)</option>
+        <option value="h100" selected>H100 (989 TF, 3.35 TB/s)</option>
+        <option value="b200">B200 (2250 TF, 8.0 TB/s)</option>
+        <option value="rtx4090">RTX 4090 (165 TF, 1.0 TB/s)</option>
+      </select></label>
+      <label>Decode batch size <span class="val" id="m2-b-v">1</span>
+        <input type="range" id="m2-b" min="0" max="10" step="0.05" value="0"></label>
+    </div>
+    <canvas id="m2-canvas" height="360"></canvas>
+    <div class="readout" id="m2-read"></div>
+  </div>
+  <div class="quiz-inline" data-q="m2q">
+    <p class="q">Your decode kernel runs at 2% of peak FLOPs. You should first try to…</p>
+    <button class="qa" data-ok="0">Buy a GPU with more TFLOPS</button>
+    <button class="qa" data-ok="1">Increase batch size / reduce bytes moved</button>
+    <div class="qfb"></div>
+  </div>
+  <button class="done-btn" data-m="2">Mark module complete ✓</button>
+</section>
+
+<!-- ================= MODULE 3 ================= -->
+<section class="module" id="m3">
+  <div class="kicker">Module 3</div>
+  <h1>The KV Cache: trading memory for compute</h1>
+  <p>
+    Attention at step <i>t</i> needs the <b>K</b>eys and <b>V</b>alues of all previous tokens.
+    Recomputing them every step would make generation O(<i>n</i>²)–O(<i>n</i>³) — hopeless. Instead
+    we <b>cache</b> each token's K and V vectors the first time they're computed. Decode step
+    <i>t</i> then only computes K/V for the <em>one</em> new token and attends over the cache.
+  </p>
+  <p>The price is memory. Per token, the cache holds:</p>
+  <p class="math">
+    KV bytes/token = 2 (K and V) × n_layers × n_kv_heads × head_dim × bytes_per_value
+  </p>
+  <p>
+    Multiply by sequence length and batch size and this routinely exceeds the weights themselves.
+    This is why <b>GQA (grouped-query attention)</b> exists: sharing one K/V head among a group of
+    query heads (Llama-3-70B uses 8 KV heads for 64 query heads) shrinks the cache 8×, and
+    <b>MLA</b> (DeepSeek) compresses it further into a low-rank latent. Cache dtype (FP8/INT8 KV) is
+    another 2× lever.
+  </p>
+  <p>
+    Left canvas: the attention matrix — green cells are read from cache, orange is the only new
+    computation each step. Right canvas: your GPU's HBM filling up as sequences grow. Find the
+    settings where a single H100 (80&nbsp;GB) can no longer hold one full-length sequence.
+  </p>
+  <div class="sim">
+    <div class="controls">
+      <label>Preset <select id="m3-preset">
+        <option value="llama8b">Llama-3-8B (32L, 8KV×128)</option>
+        <option value="llama70b" selected>Llama-3-70B (80L, 8KV×128)</option>
+        <option value="mha70b">70B w/ full MHA (80L, 64KV×128)</option>
+      </select></label>
+      <label>Seq length <span class="val" id="m3-s-v">8192</span>
+        <input type="range" id="m3-s" min="9" max="17" step="0.02" value="13"></label>
+      <label>Batch <span class="val" id="m3-bt-v">8</span>
+        <input type="range" id="m3-bt" min="1" max="128" step="1" value="8"></label>
+      <label>KV dtype <select id="m3-dt">
+        <option value="2" selected>FP16 (2 B)</option><option value="1">FP8/INT8 (1 B)</option>
+      </select></label>
+      <button id="m3-anim" class="btn">Animate decode</button>
+    </div>
+    <div class="duo">
+      <canvas id="m3-canvas" height="300"></canvas>
+      <canvas id="m3-mem" height="300"></canvas>
+    </div>
+    <div class="readout" id="m3-read"></div>
+  </div>
+  <div class="quiz-inline" data-q="m3q">
+    <p class="q">GQA with 8 KV heads instead of 64 query heads shrinks the KV cache by…</p>
+    <button class="qa" data-ok="0">64×</button>
+    <button class="qa" data-ok="1">8×</button>
+    <button class="qa" data-ok="0">2×</button>
+    <div class="qfb"></div>
+  </div>
+  <button class="done-btn" data-m="3">Mark module complete ✓</button>
+</section>
+
+<!-- ================= MODULE 4 ================= -->
+<section class="module" id="m4">
+  <div class="kicker">Module 4</div>
+  <h1>Continuous Batching: the scheduler that changed serving</h1>
+  <p>
+    Module 2 said the fix for memory-bound decode is batching. But requests don't arrive together
+    and don't finish together. <b>Static batching</b> waits to collect a batch, runs it, and —
+    crucially — a short answer must wait for the longest answer in its batch to finish. GPU slots
+    sit idle (grey) while finished requests squat in the batch.
+  </p>
+  <p>
+    <b>Continuous (iteration-level) batching</b>, introduced by Orca and used by vLLM, TGI, and
+    TensorRT-LLM, makes the scheduling decision <em>every decode step</em>: the moment a sequence
+    emits its end-of-sequence token, its slot is handed to a waiting request. Utilization stays
+    high, queueing time collapses, throughput typically improves by several ×.
+  </p>
+  <p>
+    The simulation feeds both schedulers the <em>same</em> random request stream (Poisson arrivals,
+    random output lengths). Rows are batch slots; colored bars are requests; grey is wasted GPU.
+    Compare completed-request counts and mean latency.
+  </p>
+  <div class="sim">
+    <div class="controls">
+      <label>Arrival rate <span class="val" id="m4-r-v">0.5 req/step</span>
+        <input type="range" id="m4-r" min="0.1" max="1.2" step="0.05" value="0.5"></label>
+      <label>Batch slots <span class="val" id="m4-sl-v">6</span>
+        <input type="range" id="m4-sl" min="2" max="10" step="1" value="6"></label>
+      <button id="m4-run" class="btn">Run simulation</button>
+      <button id="m4-stop" class="btn ghost">Stop</button>
+    </div>
+    <canvas id="m4-canvas" height="430"></canvas>
+    <div class="readout" id="m4-read"></div>
+  </div>
+  <div class="quiz-inline" data-q="m4q">
+    <p class="q">In static batching, what determines when a short request's slot is freed?</p>
+    <button class="qa" data-ok="0">Its own completion</button>
+    <button class="qa" data-ok="1">The longest request in its batch</button>
+    <div class="qfb"></div>
+  </div>
+  <button class="done-btn" data-m="4">Mark module complete ✓</button>
+</section>
+
+<!-- ================= MODULE 5 ================= -->
+<section class="module" id="m5">
+  <div class="kicker">Module 5</div>
+  <h1>PagedAttention: virtual memory for the KV cache</h1>
+  <p>
+    Continuous batching creates a memory problem: you don't know how long a sequence will get, so
+    naive systems <b>pre-reserve contiguous KV memory for the maximum length</b>. A request that
+    reserves 2048 slots but generates 300 tokens wastes 85% of its allocation (<em>internal
+    fragmentation</em>), and the gaps between differently-sized reservations become unusable
+    (<em>external fragmentation</em>). Measurements in the vLLM paper found only
+    <b>20–40% of "used" KV memory held actual data</b>.
+  </p>
+  <p>
+    <b>PagedAttention</b> copies the oldest idea in operating systems: split the cache into small
+    fixed-size <b>blocks</b> (e.g. 16 tokens), let each sequence hold a <em>block table</em> of
+    pointers to non-contiguous physical blocks, and allocate a new block only when the current one
+    fills. Waste drops to less than one block per sequence (&lt;4%). Bonus: two sequences sharing a
+    prompt (beam search, parallel sampling, shared system prompts) can <em>point at the same
+    physical blocks</em> — copy-on-write prefix sharing.
+  </p>
+  <p>
+    Spawn and kill requests and watch both allocators manage the same physical memory. The paged
+    side fits far more sequences before returning "out of memory".
+  </p>
+  <div class="sim">
+    <div class="controls">
+      <button id="m5-spawn" class="btn">+ Spawn request</button>
+      <button id="m5-kill" class="btn ghost">− Finish random request</button>
+      <button id="m5-auto" class="btn ghost">Auto traffic</button>
+      <button id="m5-reset" class="btn ghost">Reset</button>
+    </div>
+    <canvas id="m5-canvas" height="420"></canvas>
+    <div class="readout" id="m5-read"></div>
+  </div>
+  <div class="quiz-inline" data-q="m5q">
+    <p class="q">PagedAttention's main win is…</p>
+    <button class="qa" data-ok="0">Faster attention math</button>
+    <button class="qa" data-ok="1">Near-zero KV memory fragmentation → bigger effective batches</button>
+    <div class="qfb"></div>
+  </div>
+  <button class="done-btn" data-m="5">Mark module complete ✓</button>
+</section>
+
+<!-- ================= MODULE 6 ================= -->
+<section class="module" id="m6">
+  <div class="kicker">Module 6</div>
+  <h1>Quantization: fewer bits, fewer bytes, faster tokens</h1>
+  <p>
+    If decode speed = bytes ÷ bandwidth, then halving the bytes halves the time. Quantization stores
+    weights (and optionally KV cache / activations) in low-precision integers or floats:
+    FP16 → INT8 is 2× smaller, → INT4 is 4×. Because decode is memory-bound, this converts almost
+    directly into TPOT speedup — the dequantize-then-multiply arithmetic is nearly free.
+  </p>
+  <p>
+    The core operation maps a range of real values onto a grid of 2<sup>bits</sup> levels:
+    <span class="math">q = round(w / s)</span>, <span class="math">ŵ = q · s</span> with scale
+    <i>s</i>. The enemy is <b>outliers</b>: one huge weight stretches the grid, crushing precision
+    for everything else. Real methods fight this with <b>per-group scales</b> (a scale per 128
+    weights), and smarter criteria — GPTQ (error-compensating rounding), AWQ (protect the ~1% of
+    weights aligned with large activations), FP8 with per-tensor scaling on Hopper.
+  </p>
+  <p>
+    Below, a real weight distribution (bell curve + a few outliers) is quantized live. Top: each
+    weight snapping to its grid level. Bottom: the error. Toggle per-group scaling and watch the
+    outlier column stop poisoning its neighbors.
+  </p>
+  <div class="sim">
+    <div class="controls">
+      <label>Bits <span class="val" id="m6-b-v">4</span>
+        <input type="range" id="m6-b" min="2" max="8" step="1" value="4"></label>
+      <label><input type="checkbox" id="m6-grp" checked> per-group scales (g=32)</label>
+      <label><input type="checkbox" id="m6-out" checked> include outliers</label>
+      <button id="m6-new" class="btn ghost">Resample weights</button>
+    </div>
+    <canvas id="m6-canvas" height="380"></canvas>
+    <div class="readout" id="m6-read"></div>
+  </div>
+  <div class="quiz-inline" data-q="m6q">
+    <p class="q">Why does INT4 speed up decode ~4× vs FP16 even though the GPU still computes in FP16?</p>
+    <button class="qa" data-ok="1">Decode is memory-bound; 4× fewer bytes stream from HBM</button>
+    <button class="qa" data-ok="0">INT4 arithmetic is 4× faster than FP16 arithmetic</button>
+    <div class="qfb"></div>
+  </div>
+  <button class="done-btn" data-m="6">Mark module complete ✓</button>
+</section>
+
+<!-- ================= MODULE 7 ================= -->
+<section class="module" id="m7">
+  <div class="kicker">Module 7</div>
+  <h1>Speculative Decoding: guess cheap, verify in parallel</h1>
+  <p>
+    Decode wastes the GPU because it processes one token per weight-stream. But we know from prefill
+    that <em>verifying</em> many tokens in parallel costs barely more than one. Speculative decoding
+    exploits this: a small, fast <b>draft model</b> proposes <i>k</i> tokens; the big <b>target
+    model</b> then scores all <i>k</i>+1 positions <em>in a single forward pass</em> and accepts the
+    longest prefix that matches what it would have sampled. A clever rejection-sampling rule makes
+    the output distribution <b>exactly identical</b> to the target model alone — this is a lossless
+    speedup.
+  </p>
+  <p>
+    With per-token acceptance rate α and draft length <i>k</i>, the expected tokens produced per
+    (expensive) target pass is:
+  </p>
+  <p class="math">E[tokens] = (1 − α<sup>k+1</sup>) ÷ (1 − α)</p>
+  <p>
+    At α = 0.8, k = 4 that's ~3.4 tokens per pass. Subtract draft cost and you get real-world 2–3×
+    TPOT gains. Descendants of this idea — Medusa (extra decode heads), EAGLE (feature-level
+    drafting), and n-gram lookahead — are standard in production stacks. Note the tension: raising
+    <i>k</i> helps only while α is high; on hard text the draft misses and you pay the draft cost
+    for nothing.
+  </p>
+  <div class="sim">
+    <div class="controls">
+      <label>Draft length k <span class="val" id="m7-k-v">4</span>
+        <input type="range" id="m7-k" min="1" max="8" step="1" value="4"></label>
+      <label>Acceptance rate α <span class="val" id="m7-a-v">0.80</span>
+        <input type="range" id="m7-a" min="0.3" max="0.95" step="0.01" value="0.8"></label>
+      <label>Draft cost (vs target) <span class="val" id="m7-c-v">10%</span>
+        <input type="range" id="m7-c" min="2" max="40" step="1" value="10"></label>
+      <button id="m7-run" class="btn">Run race</button>
+    </div>
+    <canvas id="m7-canvas" height="400"></canvas>
+    <div class="readout" id="m7-read"></div>
+  </div>
+  <div class="quiz-inline" data-q="m7q">
+    <p class="q">Speculative decoding changes the output distribution of the target model.</p>
+    <button class="qa" data-ok="0">True</button>
+    <button class="qa" data-ok="1">False — rejection sampling keeps it exact</button>
+    <div class="qfb"></div>
+  </div>
+  <button class="done-btn" data-m="7">Mark module complete ✓</button>
+</section>
+
+<!-- ================= MODULE 8 ================= -->
+<section class="module" id="m8">
+  <div class="kicker">Module 8</div>
+  <h1>Sampling &amp; Decoding Strategies</h1>
+  <p>
+    The model outputs <b>logits</b> — one score per vocabulary token. Turning logits into a token is
+    a policy choice with real latency and quality consequences:
+  </p>
+  <ul>
+    <li><b>Temperature T</b> divides logits before softmax. T→0 approaches greedy argmax;
+      T&gt;1 flattens the distribution toward uniform randomness.</li>
+    <li><b>Top-k</b> keeps only the k highest-probability tokens, renormalizes.</li>
+    <li><b>Top-p (nucleus)</b> keeps the smallest set of tokens whose cumulative probability ≥ p —
+      adaptive: narrow when the model is confident, wide when it's uncertain.</li>
+    <li><b>Min-p</b> keeps tokens whose probability ≥ p × (max probability) — a newer variant that
+      behaves better at high temperature.</li>
+  </ul>
+  <p>
+    Engineering angle: sampling runs on the <em>critical path</em> of every decode step, over a
+    100k+ vocabulary, for every sequence in the batch — production engines fuse
+    temperature/top-k/top-p into a single GPU kernel. And greedy decoding is <em>still</em> not
+    bitwise deterministic across batch sizes, because floating-point reduction order changes.
+  </p>
+  <p>
+    Play with the distribution for the prompt <i>“The capital of France is”</i>. Bars show the
+    post-processing probabilities; struck-out bars were filtered. Click <b>Sample</b> repeatedly to
+    build the empirical histogram (dots).
+  </p>
+  <div class="sim">
+    <div class="controls">
+      <label>Temperature <span class="val" id="m8-t-v">1.00</span>
+        <input type="range" id="m8-t" min="0.05" max="2.5" step="0.05" value="1"></label>
+      <label>Top-k <span class="val" id="m8-k-v">off</span>
+        <input type="range" id="m8-k" min="1" max="12" step="1" value="12"></label>
+      <label>Top-p <span class="val" id="m8-p-v">1.00</span>
+        <input type="range" id="m8-p" min="0.1" max="1" step="0.01" value="1"></label>
+      <button id="m8-sample" class="btn">Sample ×20</button>
+      <button id="m8-clear" class="btn ghost">Clear samples</button>
+    </div>
+    <canvas id="m8-canvas" height="380"></canvas>
+    <div class="readout" id="m8-read"></div>
+  </div>
+  <div class="quiz-inline" data-q="m8q">
+    <p class="q">Which method adapts its candidate-set size to the model's confidence?</p>
+    <button class="qa" data-ok="0">Top-k</button>
+    <button class="qa" data-ok="1">Top-p (nucleus)</button>
+    <div class="qfb"></div>
+  </div>
+  <button class="done-btn" data-m="8">Mark module complete ✓</button>
+</section>
+
+<!-- ================= MODULE 9 ================= -->
+<section class="module" id="m9">
+  <div class="kicker">Module 9</div>
+  <h1>Multi-GPU Parallelism: when one GPU isn't enough</h1>
+  <p>
+    A 405B model at FP8 is ~405&nbsp;GB — no single GPU holds it. Three ways to split, with very
+    different latency behavior:
+  </p>
+  <ul>
+    <li><b>Tensor parallelism (TP)</b>: split every weight matrix across GPUs; every layer ends with
+      an <b>all-reduce</b> to combine partial results. All GPUs work on every token simultaneously —
+      TPOT actually <em>drops</em> (each GPU streams 1/N of the weights) — but you pay a
+      communication tax per layer, so TP wants NVLink and rarely leaves a single node.</li>
+    <li><b>Pipeline parallelism (PP)</b>: give each GPU a contiguous stack of layers; tokens flow
+      through like an assembly line. Cheap on communication (one hop per stage boundary), but
+      per-token latency is unchanged and naive pipelines idle in <b>bubbles</b> unless many
+      microbatches are in flight.</li>
+    <li><b>Expert parallelism (EP)</b>: for Mixture-of-Experts models, park different experts on
+      different GPUs and route tokens to them.</li>
+  </ul>
+  <p>Real deployments compose these: e.g. TP=8 inside a node, PP across nodes.</p>
+  <p>
+    The simulation pushes a stream of decode steps through both topologies with 4 GPUs. Watch
+    per-GPU busy/idle, the all-reduce flashes in TP, and the pipeline bubbles in PP.
+  </p>
+  <div class="sim">
+    <div class="controls">
+      <label>Interconnect <select id="m9-net">
+        <option value="fast" selected>NVLink (fast all-reduce)</option>
+        <option value="slow">PCIe/Ethernet (slow all-reduce)</option>
+      </select></label>
+      <label>In-flight microbatches (PP) <span class="val" id="m9-mb-v">1</span>
+        <input type="range" id="m9-mb" min="1" max="4" step="1" value="1"></label>
+      <button id="m9-run" class="btn">Run</button>
+    </div>
+    <canvas id="m9-canvas" height="430"></canvas>
+    <div class="readout" id="m9-read"></div>
+  </div>
+  <div class="quiz-inline" data-q="m9q">
+    <p class="q">You need to cut single-user TPOT on a model that already fits on one GPU. Which parallelism can help?</p>
+    <button class="qa" data-ok="1">Tensor parallelism (each GPU streams fewer bytes)</button>
+    <button class="qa" data-ok="0">Pipeline parallelism (per-token latency unchanged)</button>
+    <div class="qfb"></div>
+  </div>
+  <button class="done-btn" data-m="9">Mark module complete ✓</button>
+</section>
+
+<!-- ================= MODULE 10 ================= -->
+<section class="module" id="m10">
+  <div class="kicker">Module 10 — Capstone</div>
+  <h1>The Latency Lab: put it all together</h1>
+  <p>
+    You now own every knob in a serving stack. This calculator uses the first-order performance
+    model that real capacity planners use:
+  </p>
+  <ul class="tight">
+    <li><b>TTFT</b> ≈ 2 · params · prompt_len ÷ (TP · peak_FLOPs · efficiency) — prefill is compute-bound.</li>
+    <li><b>TPOT</b> ≈ (weight_bytes + KV_bytes_read) ÷ (TP · bandwidth), divided by the speculative-decoding token multiplier.</li>
+    <li><b>Throughput</b> ≈ batch ÷ TPOT; batch is capped by KV cache fitting in leftover HBM.</li>
+    <li><b>Cost</b> = GPU-$/hr ÷ throughput → $ per million tokens.</li>
+  </ul>
+  <p>
+    Try the three missions below. The bar meters show which resource is the binding constraint —
+    that is the skill: <em>always know what you're bound by.</em>
+  </p>
+  <div class="missions">
+    <div class="mission" id="ms-0">🎯 Mission 1: get TPOT under <b>15 ms</b> for a 70B model (interactive chat SLO).</div>
+    <div class="mission" id="ms-1">🎯 Mission 2: exceed <b>5,000 tok/s</b> total throughput on one node (batch workload).</div>
+    <div class="mission" id="ms-2">🎯 Mission 3: get cost under <b>$0.30 per million tokens</b>.</div>
+  </div>
+  <div class="sim">
+    <div class="controls grid3">
+      <label>Model <select id="m10-model">
+        <option value="8">8B</option><option value="70" selected>70B</option><option value="405">405B</option>
+      </select></label>
+      <label>GPU <select id="m10-gpu">
+        <option value="a100">A100 80G ($2.5/h)</option>
+        <option value="h100" selected>H100 80G ($4/h)</option>
+        <option value="b200">B200 192G ($8/h)</option>
+      </select></label>
+      <label>Tensor parallel <select id="m10-tp">
+        <option value="1" selected>TP=1</option><option value="2">TP=2</option>
+        <option value="4">TP=4</option><option value="8">TP=8</option>
+      </select></label>
+      <label>Weight dtype <select id="m10-q">
+        <option value="2" selected>FP16</option><option value="1">FP8/INT8</option><option value="0.5">INT4</option>
+      </select></label>
+      <label>KV dtype <select id="m10-kv">
+        <option value="2" selected>FP16</option><option value="1">FP8</option>
+      </select></label>
+      <label>Spec decode <select id="m10-sd">
+        <option value="1" selected>off</option><option value="1.8">draft k=4, α≈.7 (×1.8)</option>
+        <option value="2.5">EAGLE-style (×2.5)</option>
+      </select></label>
+      <label>Batch (requests) <span class="val" id="m10-b-v">16</span>
+        <input type="range" id="m10-b" min="1" max="256" step="1" value="16"></label>
+      <label>Avg context len <span class="val" id="m10-c-v">4096</span>
+        <input type="range" id="m10-c" min="512" max="32768" step="512" value="4096"></label>
+      <label>Prompt len (TTFT) <span class="val" id="m10-pl-v">1024</span>
+        <input type="range" id="m10-pl" min="128" max="16384" step="128" value="1024"></label>
+    </div>
+    <canvas id="m10-canvas" height="440"></canvas>
+    <div class="readout" id="m10-read"></div>
+  </div>
+  <button class="done-btn" data-m="10">Mark module complete ✓</button>
+</section>
+
+<!-- ================= MODULE 11 ================= -->
+<section class="module" id="m11">
+  <div class="kicker">Module 11</div>
+  <h1>Final Exam</h1>
+  <p>Ten questions covering the whole course. 8/10 to pass. Answers lock when selected.</p>
+  <div id="exam"></div>
+  <div class="exam-result" id="examResult"></div>
+  <button class="btn" id="examGrade">Grade exam</button>
+  <button class="btn ghost" id="examReset">Reset</button>
+  <button class="done-btn" data-m="11">Mark module complete ✓</button>
+  <div class="finale" id="finale" hidden>
+    <h2>🏆 Course complete</h2>
+    <p>You can now reason about any inference stack from first principles: identify the bound
+    (compute vs bandwidth vs memory capacity), pick the lever (batching, quantization, paging,
+    speculation, parallelism), and verify with the roofline. Go read the vLLM, Orca, PagedAttention,
+    and speculative-decoding papers — you'll recognize every diagram.</p>
+  </div>
+</section>
+
+<footer>
+  Built as an interactive course · all simulations run locally in your browser · numbers are
+  first-order engineering estimates (the kind you'd use for capacity planning), not benchmarks.
+</footer>
+
+</main>
+<script src="app.js"></script>
+</body>
+</html>
