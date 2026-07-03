@@ -41,6 +41,12 @@ body {
   line-height: 1.2;
 }
 .side-sub { color: var(--ink-dim); font-size: 12px; margin: 4px 0 18px; text-transform: uppercase; letter-spacing: 2px; }
+.back-home {
+  display: block; margin-bottom: 14px; padding: 6px 10px; border-radius: 8px;
+  color: var(--ink-dim); text-decoration: none; font-size: 13px;
+  border: 1px solid var(--border); background: var(--panel2);
+}
+.back-home:hover { color: var(--acc); border-color: var(--acc); }
 #navlist { list-style: none; margin: 0; padding: 0; counter-reset: nav; }
 #navlist li { counter-increment: nav; margin: 2px 0; }
 #navlist a {

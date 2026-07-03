@@ -1,0 +1,181 @@
+:root {
+  --bg: #0b0e14;
+  --panel: #11151f;
+  --panel2: #161b28;
+  --ink: #d7dce6;
+  --ink-dim: #8a93a6;
+  --acc: #5eead4;
+  --acc3: #818cf8;
+  --border: #232a3a;
+  --mono: Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+.topnav {
+  padding: 16px 32px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.topnav .back {
+  color: var(--ink-dim);
+  text-decoration: none;
+  font-size: 14px;
+}
+.topnav .back:hover { color: var(--acc); }
+
+.hero {
+  padding: 56px 32px 40px;
+  max-width: 920px;
+  margin: 0 auto;
+}
+.hero.compact { padding-top: 32px; }
+.kicker {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--acc);
+  margin: 0 0 8px;
+}
+h1 {
+  font-size: clamp(28px, 5vw, 40px);
+  margin: 0 0 12px;
+  line-height: 1.2;
+}
+.lead { color: var(--ink-dim); font-size: 18px; margin: 0 0 24px; max-width: 640px; }
+
+.hero-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+
+.btn {
+  display: inline-block;
+  padding: 11px 20px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  color: var(--ink);
+  background: var(--panel2);
+  transition: border-color .15s, filter .15s;
+}
+.btn:hover { border-color: var(--acc); }
+.btn.primary {
+  background: linear-gradient(135deg, #14b8a6, #0d9488);
+  color: #04211c;
+  border: none;
+}
+.btn.primary:hover { filter: brightness(1.1); }
+
+.wrap {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 32px 64px;
+}
+
+section { margin-bottom: 48px; }
+section h2 { font-size: 22px; margin: 0 0 8px; }
+.section-lead { color: var(--ink-dim); margin: 0 0 20px; }
+
+.cards { display: grid; gap: 16px; }
+.card {
+  display: block;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px 24px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color .2s, transform .15s;
+}
+.card:hover { border-color: var(--acc); transform: translateY(-2px); }
+.card.featured { border-color: rgba(94, 234, 212, .35); }
+.card.soon { opacity: .55; pointer-events: none; }
+.card h3 { margin: 8px 0 6px; font-size: 20px; }
+.card p { margin: 0 0 10px; color: var(--ink-dim); font-size: 15px; }
+.card .meta { font-family: var(--mono); font-size: 12px; color: var(--acc); }
+.card-cta { color: var(--acc); font-weight: 600; font-size: 14px; }
+
+.badge {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(94, 234, 212, .12);
+  color: var(--acc);
+}
+.badge.live { background: rgba(52, 211, 153, .15); color: #34d399; }
+.badge.muted { background: var(--panel2); color: var(--ink-dim); }
+
+.tags {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tags li {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  color: var(--ink-dim);
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px 22px;
+}
+.panel h2 { font-size: 18px; margin-bottom: 12px; }
+.links { margin: 0; padding-left: 18px; color: var(--ink-dim); font-size: 14px; }
+.links li { margin: 6px 0; }
+.links a { color: var(--acc3); }
+.links code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+
+.run-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px 24px;
+}
+.run-box pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.run-box code { font-family: var(--mono); font-size: 14px; color: var(--acc); }
+.run-box .dim { color: var(--ink-dim); font-size: 14px; }
+.run-box a { color: var(--acc); }
+
+footer {
+  text-align: center;
+  padding: 32px;
+  color: var(--ink-dim);
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 600px) {
+  .hero, .wrap { padding-left: 20px; padding-right: 20px; }
+}

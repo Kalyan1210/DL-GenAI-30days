@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DL-GenAI 30 Days</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+<link rel="stylesheet" href="interactives/portal.css">
+</head>
+<body>
+<header class="hero">
+  <p class="kicker">DL-GenAI 30 Days</p>
+  <h1>Hands-on deep learning &amp; generative AI</h1>
+  <p class="lead">Daily builds, training code, and browser-based interactives — all in one repo.</p>
+  <div class="hero-actions">
+    <a class="btn primary" href="interactives/">Browse interactives</a>
+    <a class="btn" href="interactives/inference-engineering/">Start Inference Engineering course</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <section>
+    <h2>Interactive courses</h2>
+    <p class="section-lead">Canvas simulations that run entirely in your browser. No install beyond a local server.</p>
+    <div class="cards">
+      <a class="card featured" href="interactives/inference-engineering/">
+        <span class="badge">12 modules · live sims</span>
+        <h3>Inference Engineering</h3>
+        <p>Prefill vs decode, roofline, KV cache, continuous batching, PagedAttention, quantization, speculative decoding, sampling, multi-GPU parallelism, and a capstone latency lab.</p>
+        <span class="card-cta">Open course →</span>
+      </a>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="panel">
+      <h2>Training &amp; code</h2>
+      <ul class="links">
+        <li><code>src/train_mnist.py</code> — MNIST training loop</li>
+        <li><code>src/models/mlp.py</code> — MLP model</li>
+        <li><code>scripts/lr_finder.py</code> — learning-rate sweep</li>
+        <li><code>tests/</code> — gradient checks</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h2>Daily notes</h2>
+      <ul class="links">
+        <li><a href="notes/day1.md">Day 1 — custom ReLU &amp; first training</a></li>
+        <li><a href="notes/day2.md">Day 2 — manual gradients</a></li>
+        <li><a href="notes/day3.md">Day 3 — LR finder &amp; schedules</a></li>
+        <li><a href="notebooks/day2_manual_grad.ipynb">Day 2 notebook</a></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="run-box" id="run">
+    <h2>How to run</h2>
+    <p>From the repo root, start the built-in server — it opens this portal and all interactives:</p>
+    <pre><code>python3 scripts/serve.py</code></pre>
+    <p>Then visit <strong id="url-hint">http://localhost:8080/</strong> in your browser.</p>
+    <p class="dim">Or manually: <code>python3 -m http.server 8080</code> and open the URL above.</p>
+  </section>
+</main>
+
+<footer>DL-GenAI 30 Days · interactives run locally in your browser</footer>
+<script>
+  function $(id) { return document.getElementById(id); }
+  if (location.protocol !== "file:") {
+    $("url-hint").textContent = location.origin + "/";
+  }
+</script>
+</body>
+</html>

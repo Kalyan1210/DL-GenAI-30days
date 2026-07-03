@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interactives — DL-GenAI 30 Days</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<link rel="stylesheet" href="portal.css">
+</head>
+<body>
+<nav class="topnav">
+  <a href="../" class="back">← DL-GenAI home</a>
+</nav>
+
+<header class="hero compact">
+  <p class="kicker">Interactives</p>
+  <h1>Learn by doing — in the browser</h1>
+  <p class="lead">Each course is a self-contained page with canvas simulations. Progress saves in your browser.</p>
+</header>
+
+<main class="wrap">
+  <div class="cards">
+    <a class="card featured" href="inference-engineering/">
+      <span class="badge live">● ready</span>
+      <h3>Inference Engineering</h3>
+      <p class="meta">12 modules · ~2–3 hrs · advanced</p>
+      <p>From TTFT/TPOT fundamentals through roofline analysis, KV cache, continuous batching, PagedAttention, quantization, speculative decoding, sampling strategies, multi-GPU parallelism, and a capstone latency calculator with missions.</p>
+      <ul class="tags">
+        <li>vLLM concepts</li>
+        <li>roofline</li>
+        <li>quantization</li>
+        <li>spec decode</li>
+      </ul>
+      <span class="card-cta">Launch course →</span>
+    </a>
+
+    <div class="card soon">
+      <span class="badge muted">coming soon</span>
+      <h3>Training from scratch</h3>
+      <p class="meta">planned</p>
+      <p>Interactive autograd, loss landscapes, and optimizer dynamics — tied to the MNIST code in <code>src/</code>.</p>
+    </div>
+  </div>
+
+  <section class="run-box">
+    <h2>Server not running?</h2>
+    <pre><code>python3 scripts/serve.py</code></pre>
+    <p>Open <a href="../" id="home-link">the home page</a> or go directly to
+      <a href="inference-engineering/">inference-engineering/</a>.</p>
+  </section>
+</main>
+
+<footer>DL-GenAI 30 Days · interactives</footer>
+<script>
+  if (location.protocol !== "file:") {
+    document.getElementById("home-link").href = location.origin + "/";
+  }
+</script>
+</body>
+</html>
